@@ -1,0 +1,32 @@
+# Segredos — NUNCA versionar
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Dados baixados e estado de sessão (credenciais!)
+data/
+pdfs_armazenados/
+**/storage_state.json
+
+# Banco local
+*.db
+test.db
+
+# Playwright e logs
+*.log
+playwright-report/
+test-results/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+CONTEXT.md
+cemigbill.html
