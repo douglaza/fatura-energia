@@ -16,7 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from app.core.config import Settings
+from app.downloader.config import CemigSettings
+
 from app.downloader import auth, navegador
 from app.downloader.auth import SessionExpired, SessionManager
 
@@ -90,6 +91,14 @@ class FakeLocator:
         self.page.preenchidos.append((self.seletor, valor))
 
 
+SELETOR_BAIXAR_PDF = 'div.clickable:has(a:text-is("Baixar PDF"))'
+
+class FakeContext:
+    def __init__(self, page): self.page = page
+    def expect_page(self, timeout=None):
+        raise FakeTimeout("nova aba não abre no fake")  # força o caminho same-tab
+
+
 class FakePage:
     """Imita o subconjunto da API do Playwright usada em ``navegador``."""
 
@@ -109,6 +118,9 @@ class FakePage:
         self.cliques: list[str] = []
         self.esperas_ms: list[int] = []
         self.preenchidos: list[tuple[str, str]] = []
+        self.url_detalhes = url_detalhes
+        self.context = FakeContext(self)
+        self.fechada = False
 
     def esta_visivel(self, seletor, filtro_visivel=None, filtro_texto=None) -> bool:
         if seletor not in self.visiveis:
@@ -131,6 +143,11 @@ class FakePage:
 
     def expect_download(self, timeout=None):
         return FakeExpectDownload(self.download)
+
+    def wait_for_url(self, pattern, timeout=None):
+        self.url = self.url_detalhes or self.url
+
+    def close(self): self.fechada = True
 
 
 class FakeSession:
@@ -161,45 +178,46 @@ class FakeSession:
         yield self.page
 
 
+
 # --------------------------------------------------------------------------- #
 # Fixtures / helpers                                                          #
 # --------------------------------------------------------------------------- #
 @pytest.fixture
-def cfg(tmp_path: Path) -> Settings:
+def cfg(tmp_path: Path) -> CemigSettings:
     """Configuração isolada em diretório temporário (ignora o .env real)."""
-    return Settings(
+    return CemigSettings(
         _env_file=None,
         download_dir=tmp_path / "raw",
     )
 
 
 # --- [PERSISTÊNCIA] helpers dos testes de sessão salva (a reativar) ---------
-# def _jwt(exp: datetime, sub: str = "123") -> str:
-#     """Monta um JWT sintético (assinatura falsa) com a claim ``exp``."""
-#
-#     def b64(dados: dict) -> str:
-#         bruto = json.dumps(dados).encode()
-#         return base64.urlsafe_b64encode(bruto).rstrip(b"=").decode()
-#
-#     header = b64({"alg": "HS256", "typ": "JWT"})
-#     payload = b64({"exp": int(exp.timestamp()), "sub": sub})
-#     return f"{header}.{payload}.fake"
-#
-#
-# def _salvar_estado(cfg: Settings, cookies: list[dict]) -> None:
-#     cfg.state_file.parent.mkdir(parents=True, exist_ok=True)
-#     cfg.state_file.write_text(
-#         json.dumps({"cookies": cookies, "origins": []}), encoding="utf-8"
-#     )
-#
-#
-# def _cookie_token(token: str) -> dict:
-#     return {
-#         "name": auth.TOKEN_COOKIE,
-#         "value": token,
-#         "domain": ".cemig.com.br",
-#         "path": "/",
-#     }
+def _jwt(exp: datetime, sub: str = "123") -> str:
+    """Monta um JWT sintético (assinatura falsa) com a claim ``exp``."""
+
+    def b64(dados: dict) -> str:
+        bruto = json.dumps(dados).encode()
+        return base64.urlsafe_b64encode(bruto).rstrip(b"=").decode()
+
+    header = b64({"alg": "HS256", "typ": "JWT"})
+    payload = b64({"exp": int(exp.timestamp()), "sub": sub})
+    return f"{header}.{payload}.fake"
+
+
+def _salvar_estado(cfg: CemigSettings, cookies: list[dict]) -> None:
+    cfg.state_file.parent.mkdir(parents=True, exist_ok=True)
+    cfg.state_file.write_text(
+        json.dumps({"cookies": cookies, "origins": []}), encoding="utf-8"
+    )
+
+
+def _cookie_token(token: str) -> dict:
+    return {
+        "name": auth.TOKEN_COOKIE,
+        "value": token,
+        "domain": ".cemig.com.br",
+        "path": "/",
+    }
 
 
 # --------------------------------------------------------------------------- #

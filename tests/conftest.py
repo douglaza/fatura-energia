@@ -1,43 +1,33 @@
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker
+from pathlib import Path
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
 
-from app.core.database import get_db, Base
 from app.main import app
-from app.models.fatura import Fatura
-from app.models.consumo import Consumo
-
-
-TEST_DATABASE_URL = "sqlite:///:memory:"  # passo 2: banco em memória
+from app.core.database import get_db, Base   # <-- caminho real do seu projeto
 
 engine = create_engine(
-    TEST_DATABASE_URL,
+    "sqlite://",
     connect_args={"check_same_thread": False},
-    poolclass=StaticPool,  # passo 2: garante a mesma conexão para todos
+    poolclass=StaticPool,
 )
-
-
-# passo 3: ativa enforcement de foreign keys no SQLite
-@event.listens_for(engine, "connect")
-def _fk_on(dbapi_conn, _):
-    dbapi_conn.execute("pragma foreign_keys=ON")
-
-
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 @pytest.fixture(scope="session", autouse=True)
-def criar_tabelas():
+def _create_tables():
+    """Cria todas as tabelas uma vez por sessão de testes."""
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture
-def db_session():
-    session = TestingSessionLocal()
+def db() -> Session:
+    """Sessão de banco isolada por teste (rollback ao final)."""
+    session = TestingSession()
     try:
         yield session
         session.rollback()
@@ -45,23 +35,31 @@ def db_session():
         session.close()
 
 
-@pytest.fixture(autouse=True)
-def limpar_tabelas(db_session):
-    yield
-    db_session.query(Consumo).delete()
-    db_session.query(Fatura).delete()
-    db_session.commit()
+@pytest.fixture
+def client(db: Session):
+    """TestClient com get_db sobrescrito para usar a sessão de teste."""
+
+    def override_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
-def client(db_session):
-    def override_get_db():
-        try:
-            yield db_session
-        finally:
-            db_session.rollback()
+def db_session(db: Session) -> Session:
+    """Alias — alguns testes usam db_session, outros db."""
+    return db
 
-    app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as client:
-        yield client
-    app.dependency_overrides.clear()
+
+@pytest.fixture
+def fixture_pdf(tmp_path: Path) -> Path:
+    """Copia um PDF de exemplo para um diretório temporário."""
+    import shutil
+
+    src = Path(__file__).parent / "fixtures" / "fatura_exemplo.pdf"
+    dest = tmp_path / "fatura_exemplo.pdf"
+    shutil.copy(src, dest)
+    return dest

@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from app.core.config import Settings, settings
+from app.downloader.config import CemigSettings, cemig_settings
 from app.downloader.auth import SessionExpired, SessionManager, dispensar_cookies
 
 if TYPE_CHECKING:
@@ -80,7 +80,7 @@ def mes_por_extenso(mes_ref: str) -> str:
 # --------------------------------------------------------------------------- #
 # Passos da navegação (cada um recebe a página já pronta)                      #
 # --------------------------------------------------------------------------- #
-def navegar_ate_faturas(page: Page, cfg: Settings = settings) -> None:
+def navegar_ate_faturas(page: Page, cfg: CemigSettings = cemig_settings) -> None:
     """Abre a página de faturas da área do cliente.
 
     Se o portal devolver o login, a sessão salva não vale mais — falhamos
@@ -198,7 +198,7 @@ def baixar_pdf_do_card(
 # --------------------------------------------------------------------------- #
 def navegar_e_baixar(
     page: Page,
-    cfg: Settings = settings,
+    cfg: CemigSettings = cemig_settings,
     mes_ref: str | None = None,
 ) -> Path:
     """Executa o fluxo completo sobre uma página já autenticada."""
@@ -219,7 +219,7 @@ def baixar_fatura(
     mes_ref: str | None = None,
     *,
     headless: bool | None = None,
-    cfg: Settings = settings,
+    cfg: CemigSettings = cemig_settings,
     session: SessionManager | None = None,
 ) -> Path:
     """Baixa a fatura da CEMIG e devolve o caminho do PDF salvo.

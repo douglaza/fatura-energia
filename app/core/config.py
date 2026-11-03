@@ -14,6 +14,9 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# from app.core.config import settings
+
+
 
 class Settings(BaseSettings):
     """Parâmetros da navegação no portal CEMIG."""

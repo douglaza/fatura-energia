@@ -7,6 +7,7 @@ Exemplos::
 
     python -m app.downloader                     # fatura em aberto
     python -m app.downloader --mes 10/2026       # mês específico
+    python -m app.downloader --persistir         # baixa e grava no banco
     python -m app.downloader -v                  # com log detalhado
 """
 
@@ -15,6 +16,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 from app.downloader.auth import SessionExpired
 from app.downloader.navegador import FaturaNaoEncontrada, baixar_fatura
@@ -32,6 +34,11 @@ def montar_parser() -> argparse.ArgumentParser:
         "--mes",
         metavar="MM/AAAA",
         help="mês de referência da fatura (padrão: a fatura em aberto)",
+    )
+    parser.add_argument(
+        "--persistir",
+        action="store_true",
+        help="após o download, extrai os dados do PDF e grava no PostgreSQL",
     )
     # --- [PERSISTÊNCIA] opções que só fazem sentido com sessão salva --------
     # parser.add_argument(
@@ -74,6 +81,22 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"Fatura salva em: {caminho}")
+
+    if args.persistir:
+        try:
+            from app.core.database import SessionLocal
+            from app.pipeline import processar_pdf
+
+            with SessionLocal() as db:
+                fatura_id = processar_pdf(Path(caminho), db)
+        except Exception as erro:
+            print(f"ERRO ao persistir: {erro}", file=sys.stderr)
+            return 2
+        if fatura_id is None:
+            print("Fatura já existia no banco — nada a fazer.")
+        else:
+            print(f"Fatura persistida — id={fatura_id}")
+
     return 0
 
 

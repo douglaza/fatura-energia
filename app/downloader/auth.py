@@ -23,9 +23,9 @@ from __future__ import annotations
 import logging
 import re
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
-from app.core.config import Settings, settings
+from app.downloader.config import CemigSettings, cemig_settings
 
 # --- [PERSISTÊNCIA] imports usados apenas pela sessão persistida ------------
 # import base64
@@ -55,7 +55,7 @@ COOKIE_SELECTORS = (
     "button:has-text('Aceitar Todos')",
     "button:has-text('Aceitar cookies')",
     "button:has-text('Concordo')",
-    "[aria-label*='Aceitar']",
+    "button[aria-label*='Aceitar']",   # restringido a <button> clicável
     "button#accept-all-button",
 )
 
@@ -67,29 +67,18 @@ class SessionExpired(RuntimeError):
 # --------------------------------------------------------------------------- #
 # JWT — desativado com a persistência da sessão                                #
 # --------------------------------------------------------------------------- #
-# Só faz sentido ler a expiração do token quando existe um estado salvo para
-# inspecionar. Reative estes helpers junto com o bloco de persistência.
-#
 # def decodificar_jwt(token: str) -> dict:
-#     """Decodifica o payload de um JWT **sem** verificar a assinatura.
-#
-#     Serve só para ler claims (``exp``, ``sub``). Nunca use o conteúdo como
-#     prova de autenticidade.
-#     """
 #     try:
 #         payload_b64 = token.split(".")[1]
 #     except IndexError as e:
 #         raise SessionExpired(f"Token malformado: {e}") from e
-#
-#     padding = "=" * (-len(payload_b64) % 4)  # JWT usa base64url sem padding
+#     padding = "=" * (-len(payload_b64) % 4)
 #     try:
 #         return json.loads(base64.urlsafe_b64decode(payload_b64 + padding))
 #     except (ValueError, json.JSONDecodeError) as e:
 #         raise SessionExpired(f"Token malformado: {e}") from e
 #
-#
 # def expiracao_do_token(token: str) -> datetime | None:
-#     """Data/hora (UTC) de expiração do token, ou ``None`` se não houver ``exp``."""
 #     try:
 #         exp = decodificar_jwt(token).get("exp")
 #     except SessionExpired:
@@ -128,80 +117,32 @@ class SessionManager:
     ``storage_state.json`` está comentada — procure por ``[PERSISTÊNCIA]``.
     """
 
-    def __init__(self, cfg: Settings = settings):
+    def __init__(self, cfg: CemigSettings = cemig_settings):
         self.cfg = cfg
         #: ``storage_state`` capturado no login e reutilizado no contexto de
         #: navegação — nunca gravado em disco nesta versão.
-        self._state: dict | None = None
+        self._state: Optional[dict[str, Any]] = None
 
     @property
     def autenticado(self) -> bool:
         """``True`` se já houve login nesta execução (sessão em memória)."""
         return self._state is not None
 
-    # --------------------- estado salvo em disco (a reativar) ------------- #
-    # def _load_state(self) -> dict:
-    #     if not self.cfg.state_file.exists():
-    #         raise SessionExpired(
-    #             f"{self.cfg.state_file} não encontrado. "
-    #             "Rode o login interativo (python -m app.downloader --login)."
-    #         )
-    #     try:
-    #         return json.loads(self.cfg.state_file.read_text(encoding="utf-8"))
-    #     except (OSError, json.JSONDecodeError) as e:
-    #         raise SessionExpired(f"Estado de sessão ilegível: {e}") from e
-    #
-    # @staticmethod
-    # def _cookie(state: dict, nome: str) -> str | None:
-    #     for cookie in state.get("cookies", []):
-    #         if cookie.get("name") == nome:
-    #             return cookie.get("value")
-    #     return None
-    #
-    # def is_session_valid(self, margin_minutes: int | None = None) -> bool:
-    #     """``True`` se o access-token existe e expira depois da margem de segurança."""
-    #     margem = margin_minutes or self.cfg.token_refresh_margin_minutes
-    #     try:
-    #         state = self._load_state()
-    #     except SessionExpired:
-    #         return False
-    #
-    #     token = self._cookie(state, TOKEN_COOKIE)
-    #     if not token:
-    #         return False
-    #
-    #     expira_em = expiracao_do_token(token)
-    #     if expira_em is None:
-    #         return False
-    #
-    #     limite = datetime.now(timezone.utc) + timedelta(minutes=margem)
-    #     valida = expira_em > limite
-    #     logger.debug("Token expira em %s (válida: %s)", expira_em.isoformat(), valida)
-    #     return valida
-    #
-    # def token_expiry(self) -> datetime | None:
-    #     """Expiração do token atual — útil para logs/monitoramento."""
-    #     try:
-    #         token = self._cookie(self._load_state(), TOKEN_COOKIE)
-    #     except SessionExpired:
-    #         return None
-    #     return expiracao_do_token(token) if token else None
-
     # ----------------------------- garantia ------------------------------- #
-    def ensure_valid(self) -> None:
+    def ensure_valid(self) -> bool:
         """Garante uma sessão para a execução; se não houver, pede o login.
 
-        Sem persistência não existe "sessão anterior": a cada processo o
-        browser abre e o login (com captcha) é feito manualmente.
+        Retorna ``True`` se a sessão ficou disponível.
         """
         if self.autenticado:
             logger.info("Sessão em memória já disponível para esta execução.")
-            return
+            return True
 
         logger.info("Nenhuma sessão — abrindo o browser para login manual.")
         self.login_interactive(headless=False)  # captcha exige tela
         if not self.autenticado:
             raise SessionExpired("Login não produziu uma sessão válida.")
+        return True
 
     # ------------------------------- login -------------------------------- #
     def login_interactive(self, headless: bool = False) -> None:
@@ -226,8 +167,8 @@ class SessionManager:
 
                 logger.info("Abrindo página de login: %s", self.cfg.login_url)
                 page.goto(self.cfg.login_url, wait_until="domcontentloaded")
-                dispensar_cookies(page) 
-                self._try_autofill(page)
+                dispensar_cookies(page)
+                self._preencher_credenciais(page)
 
                 print("\n>>> Conclua o login (e o reCAPTCHA) no browser aberto.")
                 print(">>> Aguardando o redirecionamento para /portal/home ...")
@@ -245,18 +186,19 @@ class SessionManager:
                 self._state = context.storage_state()
 
                 # --- [PERSISTÊNCIA] gravação do estado em disco (a reativar) --
-                # context.storage_state(path=str(self.cfg.state_file))
-                # logger.info("Sessão salva em %s", self.cfg.state_file)
+                context.storage_state(path=str(self.cfg.state_file))
+                logger.info("Sessão salva em %s", self.cfg.state_file)
 
                 logger.info("Sessão capturada em memória (persistência desativada).")
             finally:
                 browser.close()
 
-    def _try_autofill(self, page: Page) -> None:
+    def _preencher_credenciais(self, page: Page) -> None:
         """Pré-preenche usuário/senha quando as credenciais estão no .env.
 
-        O captcha continua manual — qualquer falha aqui é silenciosa e o
-        login segue 100% manual.
+        ⚠️ NÃO clica em submit: o captcha ainda não foi resolvido, e o clique
+        dispararia erro de validação no portal. O humano resolve o captcha
+        e envia o formulário manualmente. Qualquer falha aqui é silenciosa.
         """
         if not (self.cfg.user and self.cfg.password):
             logger.info("Credenciais não configuradas — login totalmente manual.")
@@ -266,8 +208,7 @@ class SessionManager:
             campo_usuario.wait_for(timeout=5_000)
             campo_usuario.fill(self.cfg.user)
             page.locator('input[type="password"]').first.fill(self.cfg.password)
-            page.locator('button[type="submit"], button:has-text("Entrar")').first.click()
-            logger.info("Credenciais pré-preenchidas; falta o captcha.")
+            logger.info("Credenciais pré-preenchidas; humano resolve captcha e envia.")
         except Exception:
             logger.warning("Autofill falhou — login manual a partir daqui.")
 
@@ -301,7 +242,7 @@ class SessionManager:
             context = browser.new_context(
                 # --- [PERSISTÊNCIA] estado lido do arquivo (a reativar) ------
                 # storage_state=str(self.cfg.state_file),
-                storage_state=self._state,
+                storage_state=self._state if self._state else None,  # None → contexto limpo
                 user_agent=self.cfg.user_agent,
                 locale="pt-BR",
                 accept_downloads=True,
@@ -310,3 +251,4 @@ class SessionManager:
         finally:
             browser.close()
             pw.stop()
+
