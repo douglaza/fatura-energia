@@ -1,0 +1,1 @@
+"""Módulo de analytics: indicadores, relatórios e dashboard Excel."""

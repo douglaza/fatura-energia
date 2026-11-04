@@ -8,12 +8,13 @@ Pipeline automatizado para **download, parsing e armazenamento de faturas CEMIG*
 - 📄 **Parser** — extração de dados (vencimento, consumo kWh, valor, referência) dos PDFs com pdfplumber/pdfminer.
 - 🗄️ **PostgreSQL** — modelos SQLAlchemy + migrações Alembic (`faturas`, `consumos`).
 - 🔌 **API REST** — endpoints para consulta de faturas/consumos e upload manual de PDFs.
+- 📊 **Dashboard Excel** — exportação de indicadores, histórico, faturas e gráficos via OpenPyXL.
 - 🔄 **Pipeline** — orquestra parser → persistência (`app/pipeline.py`), disparável via `python -m app.downloader --persistir`.
-- ✅ **Testes** — suíte pytest cobrindo parser, CRUD, API, relacionamentos, downloader (dublês sem browser) e pipeline.
+- ✅ **Testes** — 70 testes pytest cobrindo parser, CRUD, API, relacionamentos, downloader (dublês sem browser), pipeline e dashboard.
 
 ## Stack
 
-Python · FastAPI · SQLAlchemy · Alembic · PostgreSQL · Playwright · pdfplumber · pytest
+Python · FastAPI · SQLAlchemy · Alembic · PostgreSQL · Playwright · pdfplumber · pandas · OpenPyXL · pytest
 
 ## Estrutura
 
@@ -22,12 +23,13 @@ Python · FastAPI · SQLAlchemy · Alembic · PostgreSQL · Playwright · pdfplu
     │   ├── __init__.py
     │   ├── main.py              # app FastAPI e roteadores (faturas, upload)
     │   ├── pipeline.py          # orquestra parser → persistência
+    │   ├── analytics/           # indicadores, relatórios pandas e dashboard OpenPyXL
     │   ├── core/                # config.py (Settings) + database.py (conexão)
     │   ├── crud/                # operações de banco (fatura, consumo)
     │   ├── db/                  # models SQLAlchemy (fatura, consumo) + repo
     │   ├── models/              # modelos ORM (fatura, consumo)
     │   ├── schemas/             # schemas Pydantic (entrada/saída)
-    │   ├── routers/             # endpoints FastAPI (faturas, consumos, upload)
+    │   ├── routers/             # endpoints FastAPI (faturas, consumos, upload, relatórios)
     │   ├── downloader/          # automação de login e download (Playwright)
     │   │   ├── auth.py          # SessionManager (login, reCAPTCHA, sessão em memória)
     │   │   ├── config.py        # CemigSettings (variáveis CEMIG_*)
@@ -89,6 +91,18 @@ curl -X POST http://localhost:8000/faturas/upload \
   -F "arquivo=@fatura.pdf"
 ```
 
+**Baixar dashboard Excel** (com a API em execução e o banco configurado):
+
+```bash
+curl -o dashboard_consumo.xlsx http://localhost:8000/relatorios/dashboard.xlsx
+```
+
+O arquivo contém quatro abas: **Resumo Executivo** (consumo médio, maior e menor
+consumo, projeção, valores e tendência), **Histórico**, **Faturas** e **Gráficos**.
+A projeção do próximo mês é a média dos consumos válidos de até três meses mais
+recentes; é uma estimativa simples, não considera sazonalidade. Veja também
+[cemigbill1.html](cemigbill1.html).
+
 **Testes**:
 
 ```bash
@@ -114,7 +128,7 @@ pytest -v
 - [x] Integração download → parser → PostgreSQL (`--persistir` + `app/pipeline.py`)
 - [ ] Armazenar o PDF original em disco e salvar o caminho na fatura (nova coluna `arquivo_pdf`, nova migration Alembic)
 - [ ] Encadear download → upload sem intervenção humana
-- [ ] Histórico de consumo consolidado / dashboards
+- [x] Histórico consolidado e dashboard Excel com indicadores e gráficos
 - [ ] Manter seletores do portal em constantes para ajuste rápido quando mudarem
 
 ## Segurança
@@ -124,5 +138,5 @@ pytest -v
 
 ## Status
 
-> Projeto em desenvolvimento ativo. Download, parsing, API e integração download → parser → banco funcionando. Login continua manual (reCAPTCHA) a cada execução nesta fase (v1).
+> Projeto em desenvolvimento ativo. Download, parsing, API, integração download → parser → banco e exportação do dashboard Excel funcionando. Login continua manual (reCAPTCHA) a cada execução nesta fase (v1).
 
