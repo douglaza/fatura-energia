@@ -21,6 +21,7 @@ from app.downloader.config import CemigSettings
 from app.downloader import auth, navegador
 from app.downloader.auth import SessionExpired, SessionManager
 
+SELETOR_BAIXAR_PDF = 'div.clickable:has(a:text-is("Baixar PDF"))'
 
 # --------------------------------------------------------------------------- #
 # Dublês do Playwright                                                         #
@@ -91,12 +92,16 @@ class FakeLocator:
         self.page.preenchidos.append((self.seletor, valor))
 
 
-SELETOR_BAIXAR_PDF = 'div.clickable:has(a:text-is("Baixar PDF"))'
+class FakeExpectPage:
+    def __enter__(self):
+        return self
 
-class FakeContext:
-    def __init__(self, page): self.page = page
-    def expect_page(self, timeout=None):
-        raise FakeTimeout("nova aba não abre no fake")  # força o caminho same-tab
+    @property
+    def value(self):
+        raise FakeTimeout("nova aba não abre no fake")
+
+    def __exit__(self, *args):
+        return False
 
 
 class FakePage:
@@ -108,8 +113,12 @@ class FakePage:
         textos_cards=(),
         url_apos_goto: str | None = None,
         nome_download: str = "fatura.pdf",
+        url_detalhes=None
     ):
         self.visiveis = set(visiveis)
+        self.visiveis.add(
+            navegador.SELETOR_BAIXAR_PDF
+        )
         self.textos_cards = tuple(textos_cards)
         self.url_apos_goto = url_apos_goto
         self.url = ""
@@ -147,13 +156,17 @@ class FakePage:
     def wait_for_url(self, pattern, timeout=None):
         self.url = self.url_detalhes or self.url
 
-    def close(self): self.fechada = True
+    def wait_for_load_state(self, state="load", **_kwargs):
+        pass
+    
+    def close(self): 
+        self.fechada = True
 
 
 class FakeSession:
     """Sessão de mentira: registra as chamadas em vez de abrir browser."""
 
-    def __init__(self, page: FakePage | None = None, valida: bool = True):
+    def __init__(self, page: FakePage | None = None, valida: bool = True, url_detalhes: str | None = None):
         self.page = page or FakePage(
             visiveis={
                 navegador.SELETOR_MENU_CONTAS,
@@ -165,6 +178,7 @@ class FakeSession:
         self.ensure_chamado = False
         self.contexto_aberto = False
         self.headless_usado: bool | None = None
+        self.url_detalhes = url_detalhes
 
     def ensure_valid(self) -> None:
         self.ensure_chamado = True
@@ -178,6 +192,12 @@ class FakeSession:
         yield self.page
 
 
+class FakeContext:
+    def __init__(self, page):
+        self.page = page
+
+    def expect_page(self, timeout=None):
+        return FakeExpectPage()
 
 # --------------------------------------------------------------------------- #
 # Fixtures / helpers                                                          #
@@ -188,8 +208,10 @@ def cfg(tmp_path: Path) -> CemigSettings:
     return CemigSettings(
         _env_file=None,
         download_dir=tmp_path / "raw",
+        faturas_url="https://atende.cemig.com.br/portal/cliente/faturas",
+        state_file=tmp_path / "session_state.json"
     )
-
+    
 
 # --- [PERSISTÊNCIA] helpers dos testes de sessão salva (a reativar) ---------
 def _jwt(exp: datetime, sub: str = "123") -> str:
@@ -461,3 +483,5 @@ def test_auth_mode_reuse_sem_sessao_falha_sem_abrir_browser(cfg):
 def test_baixar_fatura_propaga_sessao_expirada(cfg):
     with pytest.raises(SessionExpired):
         navegador.baixar_fatura(cfg=cfg, session=FakeSession(valida=False))
+
+

@@ -14,7 +14,8 @@ class FaturaBase(BaseModel):
     data_emissao: date
     vencimento: date
     valor_total: Decimal = Field(gt=0)
-    consumo_kwh: Decimal = Field(ge=0)
+    # consumo_kwh: Decimal = Field(ge=0)
+    consumo_kwh: Decimal | None = Field(default=None, ge=0)
     texto_extraido: str | None = None
 
 
@@ -32,7 +33,9 @@ class FaturaUpdate(BaseModel):
     data_emissao: date | None = None
     vencimento: date | None = None
     valor_total: Decimal | None = Field(default=None, gt=0)
-    consumo_kwh: Decimal | None = Field(default=None, ge=0)
+    # consumo_kwh: Decimal | None = Field(default=None, ge=0)
+    consumo_kwh: Decimal | None = None   
+
     texto_extraido: str | None = None
 
 
@@ -42,3 +45,7 @@ class FaturaRead(FaturaBase):
 
     id: int
     consumos: list[ConsumoRead] = []
+
+
+    # class Config:
+    #     from_attributes = True 

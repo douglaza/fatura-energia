@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 #: Tempo máximo (ms) para cada espera de elemento/download no portal.
 TIMEOUT_MS = 30_000
 
+#: Timeout curto para tentativas opcionais (nova aba, busca por texto).
+TIMEOUT_CURTO_MS = 5_000
+
 #: Item do menu lateral que abre a lista de contas/faturas.
 SELETOR_MENU_CONTAS = 'div[title="Navegar para Contas"]'
 
@@ -35,6 +38,22 @@ SELETOR_CARD = "div.clickable"
 
 #: Marca dentro do card que identifica a fatura ainda não paga.
 SELETOR_CARD_EM_ABERTO = 'span[title="Em aberto"]'
+
+#: Botão "Baixar PDF" na página de detalhes da fatura.
+#: Constante pública para que os testes possam registrá-la no dublê
+#  (``FakePage(visiveis={..., navegador.SELETOR_BAIXAR_PDF})``).
+
+SELETOR_BAIXAR_PDF = 'div.clickable:has(a:text-is("Baixar PDF"))'
+
+SELETORES_BAIXAR_PDF = (
+    SELETOR_BAIXAR_PDF,
+    'a:text-is("Baixar PDF")',
+    'button:has-text("Baixar PDF")',
+    'text="Baixar PDF"',
+)
+
+#: Padrão de URL da página de detalhes (navegação na mesma aba).
+URL_DETALHES = "**/bills/duplicate-bill/details**"
 
 NOME_FALLBACK = "fatura_cemig.pdf"
 
@@ -126,7 +145,7 @@ def localizar_card(page: Page, mes_ref: str | None = None):
     for texto in (referencia, mes_por_extenso(referencia)):
         card = page.locator(SELETOR_CARD).filter(has_text=texto).first
         try:
-            card.wait_for(state="visible", timeout=5_000)
+            card.wait_for(state="visible", timeout=TIMEOUT_CURTO_MS)
         except Exception:
             logger.debug("Nenhum card com o texto %r.", texto)
             continue
@@ -139,6 +158,29 @@ def localizar_card(page: Page, mes_ref: str | None = None):
     )
 
 
+def encontrar_botao_baixar(detalhes_page):
+    ultimo_erro = None
+
+    for seletor in SELETORES_BAIXAR_PDF:
+        try:
+            loc = detalhes_page.locator(seletor).first
+            loc.wait_for(state="visible", timeout=TIMEOUT_CURTO_MS)
+
+            logger.info(
+                "Botão 'Baixar PDF' encontrado via seletor %r",
+                seletor,
+            )
+
+            return loc
+
+        except Exception as exc:
+            ultimo_erro = exc
+
+    raise RuntimeError(
+        "Botão 'Baixar PDF' não encontrado na página."
+    ) from ultimo_erro
+
+
 def baixar_pdf_do_card(
     page: Page,
     card,
@@ -148,49 +190,75 @@ def baixar_pdf_do_card(
     """Clica no card, chega à página de detalhes, clica em 'Baixar PDF' e salva o PDF.
 
     O portal pode abrir os detalhes em nova aba ou navegar na mesma aba —
-    lidamos com os dois casos.
+    lidamos com os dois casos. A aba extra, se aberta, é sempre fechada
+    (mesmo em caso de erro).
     """
     destino_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Clica no card e descobre se abriu nova aba ou navegou na mesma
+    detalhes_page: Page
+    nova_aba = False
+    # try:
+    #     with page.context.expect_page(timeout=TIMEOUT_CURTO_MS) as new_page_info:
+    #         card.click()
+    #     detalhes_page = new_page_info.value
+    #     nova_aba = True
+    #     logger.info("Detalhes abriram em nova aba: %s", detalhes_page.url)
+    # except Exception:
+    #     # Não abriu aba nova → o expect_page consumiu o clique; refazemos.
+    #     card.click()
+    #     page.wait_for_url(URL_DETALHES, timeout=TIMEOUT_MS)
+    #     detalhes_page = page
+    #     logger.info("Detalhes abriram na mesma aba: %s", detalhes_page.url)
+    with page.context.expect_page(timeout=TIMEOUT_CURTO_MS) as new_page_info:
+        card.click()
+
     try:
-        with page.context.expect_page(timeout=5_000) as new_page_info:
-            card.click()
         detalhes_page = new_page_info.value
-        logger.info("Detalhes abriram em nova aba: %s", detalhes_page.url)
+        nova_aba = True
     except Exception:
-        # Não abriu aba nova → navegação na mesma página
-        page.wait_for_url("**/bills/duplicate-bill/details**", timeout=TIMEOUT_MS)
+        page.wait_for_url(URL_DETALHES, timeout=TIMEOUT_MS)
         detalhes_page = page
-        logger.info("Detalhes abriram na mesma aba: %s", detalhes_page.url)
 
-    detalhes_page.wait_for_load_state()
 
-    # 2. Localiza o botão "Baixar PDF" (div clicável que contém o link)
-    baixar_link = detalhes_page.locator(
-        'div.clickable:has(a:text-is("Baixar PDF"))'
-    ).first
-    baixar_link.wait_for(state="visible", timeout=TIMEOUT_MS)
-    logger.info("Botão 'Baixar PDF' encontrado, clicando...")
+    # try:
+    #     detalhes_page.wait_for_load_state()
 
-    # 3. Captura o download ao clicar
-    with detalhes_page.expect_download(timeout=TIMEOUT_MS) as download_info:
-        baixar_link.click()
+    #     # 2. Localiza o botão "Baixar PDF" (div clicável que contém o link)
+    #     baixar_link = detalhes_page.locator(SELETOR_BAIXAR_PDF).first
+    #     baixar_link.wait_for(state="visible", timeout=TIMEOUT_MS)
+    #     logger.info("Botão 'Baixar PDF' encontrado, clicando...")
 
-    download = download_info.value
+    #     # 3. Captura o download ao clicar
+    #     with detalhes_page.expect_download(timeout=TIMEOUT_MS) as download_info:
+    #         baixar_link.click()
 
-    if detalhes_page is not page:
-        detalhes_page.close()
+        detalhes_page.wait_for_load_state()
 
-    nome = getattr(download, "suggested_filename", None) or nome_fallback
-    if not nome.lower().endswith(".pdf"):
-        nome = f"{nome}.pdf"
-    destino = destino_dir / nome
+        botao = encontrar_botao_baixar(detalhes_page)
 
-    download.save_as(destino)
-    logger.info("Fatura salva em %s", destino)
-    return destino
+        with detalhes_page.expect_download(timeout=TIMEOUT_MS) as download_info:
+            logger.info("Clicando em 'Baixar PDF'...")
+            botao.click()
 
+
+        download = download_info.value
+
+        nome = getattr(download, "suggested_filename", None) or nome_fallback
+        if not nome.lower().endswith(".pdf"):
+            nome = f"{nome}.pdf"
+        destino = destino_dir / nome
+
+        download.save_as(destino)
+        logger.info("Fatura salva em %s", destino)
+        return destino
+    finally:
+        # Fecha apenas a aba que NÓS abrimos — nunca a página original.
+        if nova_aba:
+            try:
+                detalhes_page.close()
+            except Exception:
+                logger.warning("Não foi possível fechar a aba de detalhes.")
 
 
 # --------------------------------------------------------------------------- #
@@ -209,11 +277,12 @@ def navegar_e_baixar(
         page,
         card,
         cfg.download_dir,
-        nome_fallback=f"fatura_{normalizar_mes_referencia(mes_ref).replace('/', '-')}.pdf"
-        if mes_ref
-        else NOME_FALLBACK,
+        nome_fallback=(
+            f"fatura_{normalizar_mes_referencia(mes_ref).replace('/', '-')}.pdf"
+            if mes_ref
+            else NOME_FALLBACK
+        ),
     )
-
 
 def baixar_fatura(
     mes_ref: str | None = None,
@@ -222,31 +291,16 @@ def baixar_fatura(
     cfg: CemigSettings = cemig_settings,
     session: SessionManager | None = None,
 ) -> Path:
-    """Baixa a fatura da CEMIG e devolve o caminho do PDF salvo.
-
-    ⚠️ v1: **o login é manual a cada execução** (a persistência da sessão está
-    desativada). O browser abre na tela de login e espera o humano resolver o
-    reCAPTCHA antes de seguir para as faturas.
-
-    Args:
-        mes_ref: mês no formato ``MM/AAAA``; ``None`` baixa a fatura em aberto.
-        headless: força headless; ``None`` usa ``CEMIG_HEADLESS``.
-        cfg: configurações (útil em testes).
-        session: gerenciador de sessão alternativo (útil em testes).
-
-    Raises:
-        SessionExpired: login não concluído ou portal devolveu a tela de login.
-        FaturaNaoEncontrada: nenhuma fatura corresponde ao mês pedido.
-        ValueError: ``mes_ref`` em formato inválido.
-    """
     if mes_ref is not None:
-        normalizar_mes_referencia(mes_ref)  # falha cedo, antes de abrir browser
+        normalizar_mes_referencia(mes_ref)  # falha cedo, antes do browser
 
     session = session or SessionManager(cfg)
-    session.ensure_valid()  # sem persistência: dispara o login manual aqui
+    session.ensure_valid()  # levanta SessionExpired se não há sessão válida
 
     headless = cfg.headless if headless is None else headless
     logger.info("Iniciando navegação (headless=%s, mes_ref=%s)", headless, mes_ref)
 
     with session.abrir_contexto(headless=headless) as page:
         return navegar_e_baixar(page, cfg, mes_ref)
+
+    # normalizar_mes_referencia(mes_ref) # falha cedo, antes de abrir browser

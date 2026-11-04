@@ -21,4 +21,6 @@ class CemigSettings(BaseSettings):
         "Chrome/131.0.0.0 Safari/537.36"
     )
 
+    state_file: Path = Path("data/session_state.json")
+
 cemig_settings = CemigSettings()

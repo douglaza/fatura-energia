@@ -28,9 +28,9 @@ from typing import TYPE_CHECKING, Any, Optional
 from app.downloader.config import CemigSettings, cemig_settings
 
 # --- [PERSISTÊNCIA] imports usados apenas pela sessão persistida ------------
-# import base64
-# import json
-# from datetime import datetime, timedelta, timezone
+import base64, json
+from datetime import datetime, timedelta, timezone
+
 
 if TYPE_CHECKING:  # apenas para tipagem — nada é importado em runtime
     from collections.abc import Iterator
@@ -40,7 +40,7 @@ if TYPE_CHECKING:  # apenas para tipagem — nada é importado em runtime
 logger = logging.getLogger(__name__)
 
 # --- [PERSISTÊNCIA] cookie onde o next-auth guarda o JWT de acesso ----------
-# TOKEN_COOKIE = "__Secure-next-auth.access-token"
+TOKEN_COOKIE = "__Secure-next-auth.access-token"
 
 #: Trecho comum aos cookies de sessão (next-auth.session-token, etc.).
 SESSION_COOKIE_HINT = "next-auth"
@@ -67,25 +67,25 @@ class SessionExpired(RuntimeError):
 # --------------------------------------------------------------------------- #
 # JWT — desativado com a persistência da sessão                                #
 # --------------------------------------------------------------------------- #
-# def decodificar_jwt(token: str) -> dict:
-#     try:
-#         payload_b64 = token.split(".")[1]
-#     except IndexError as e:
-#         raise SessionExpired(f"Token malformado: {e}") from e
-#     padding = "=" * (-len(payload_b64) % 4)
-#     try:
-#         return json.loads(base64.urlsafe_b64decode(payload_b64 + padding))
-#     except (ValueError, json.JSONDecodeError) as e:
-#         raise SessionExpired(f"Token malformado: {e}") from e
-#
-# def expiracao_do_token(token: str) -> datetime | None:
-#     try:
-#         exp = decodificar_jwt(token).get("exp")
-#     except SessionExpired:
-#         return None
-#     if exp is None:
-#         return None
-#     return datetime.fromtimestamp(exp, tz=timezone.utc)
+def decodificar_jwt(token: str) -> dict:
+    try:
+        payload_b64 = token.split(".")[1]
+    except IndexError as e:
+        raise SessionExpired(f"Token malformado: {e}") from e
+    padding = "=" * (-len(payload_b64) % 4)
+    try:
+        return json.loads(base64.urlsafe_b64decode(payload_b64 + padding))
+    except (ValueError, json.JSONDecodeError) as e:
+        raise SessionExpired(f"Token malformado: {e}") from e
+
+def expiracao_do_token(token: str) -> datetime | None:
+    try:
+        exp = decodificar_jwt(token).get("exp")
+    except SessionExpired:
+        return None
+    if exp is None:
+        return None
+    return datetime.fromtimestamp(exp, tz=timezone.utc)
 
 
 # --------------------------------------------------------------------------- #
@@ -139,10 +139,34 @@ class SessionManager:
             return True
 
         logger.info("Nenhuma sessão — abrindo o browser para login manual.")
+
+        if self.cfg.auth_mode == "reuse":
+            raise SessionExpired(
+                "Sessão expirou. Rode o modo interactive primeiro."
+            )
+            
         self.login_interactive(headless=False)  # captcha exige tela
         if not self.autenticado:
             raise SessionExpired("Login não produziu uma sessão válida.")
         return True
+
+    def token_expiry(self) -> datetime | None:
+        if not self.cfg.state_file.exists():
+            return None
+        try:
+            cookies = json.loads(self.cfg.state_file.read_text()).get("cookies", [])
+        except (json.JSONDecodeError, OSError):
+            return None
+        for c in cookies:
+            if c.get("name") == TOKEN_COOKIE:
+                return expiracao_do_token(c.get("value", ""))
+        return None
+
+    def is_session_valid(self) -> bool:
+        exp = self.token_expiry()
+        if exp is None:
+            return False
+        return exp > datetime.now(timezone.utc) + timedelta(minutes=15)
 
     # ------------------------------- login -------------------------------- #
     def login_interactive(self, headless: bool = False) -> None:
@@ -224,11 +248,11 @@ class SessionManager:
         from playwright.sync_api import sync_playwright
 
         # --- [PERSISTÊNCIA] exigir o arquivo de estado (a reativar) ----------
-        # if not self.cfg.state_file.exists():
-        #     raise SessionExpired(
-        #         f"{self.cfg.state_file} não encontrado. "
-        #         "Rode o login interativo (python -m app.downloader --login)."
-        #     )
+        if not self.cfg.state_file.exists():
+            raise SessionExpired(
+                f"{self.cfg.state_file} não encontrado. "
+                "Rode o login interativo (python -m app.downloader --login)."
+            )
 
         if self._state is None:
             logger.warning(
@@ -241,8 +265,7 @@ class SessionManager:
         try:
             context = browser.new_context(
                 # --- [PERSISTÊNCIA] estado lido do arquivo (a reativar) ------
-                # storage_state=str(self.cfg.state_file),
-                storage_state=self._state if self._state else None,  # None → contexto limpo
+                storage_state=str(self.cfg.state_file),
                 user_agent=self.cfg.user_agent,
                 locale="pt-BR",
                 accept_downloads=True,

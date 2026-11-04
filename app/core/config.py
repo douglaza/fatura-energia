@@ -14,6 +14,8 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from typing import Literal
+
 # from app.core.config import settings
 
 
@@ -45,9 +47,9 @@ class Settings(BaseSettings):
     download_dir: Path = Path("data/raw")
 
     # --- [PERSISTÊNCIA] reativar junto com o storage_state.py (ver auth.py) ---
-    # auth_mode: Literal["interactive", "reuse"] = "interactive"
-    # state_file: Path = Path("data/state/storage_state.json")
-    # token_refresh_margin_minutes: int = 15
+    auth_mode: Literal["interactive", "reuse"] = "interactive"
+    state_file: Path = Path("data/state/storage_state.json")
+    token_refresh_margin_minutes: int = 15
 
     user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "

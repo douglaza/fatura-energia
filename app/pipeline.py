@@ -22,8 +22,14 @@ logger = logging.getLogger(__name__)
 RAW_DIR = settings.download_dir
 
 
-def processar_pdf(pdf_path: Path, db: Session) -> int | None:
-    texto = extrair_texto(pdf_path.read_bytes())
+def processar_pdf(pdf_path: Path | bytes, db: Session) -> int | None:
+    # texto = extrair_texto(pdf_path.read_bytes())
+    if isinstance(pdf_path, Path):
+        pdf_data = pdf_path.read_bytes()
+    else:
+        pdf_data = pdf_path
+    texto = extrair_texto(pdf_data)
+
     dados = parse_fatura(texto)
 
     if not dados["codigo_fatura"]:
@@ -46,6 +52,10 @@ def processar_pdf(pdf_path: Path, db: Session) -> int | None:
 
 def _renomear_com_referencia(pdf_path: Path, fatura: Fatura) -> None:
     """Renomeia o PDF (timestamp) para um nome estável e identificável."""
+
+    if not isinstance(pdf_path, Path):
+        return
+        
     destino = RAW_DIR / f"fatura_{fatura.codigo_fatura}.pdf"
     if destino != pdf_path:
         shutil.move(str(pdf_path), destino)

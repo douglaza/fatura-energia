@@ -1,6 +1,5 @@
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -123,8 +122,10 @@ def upload_fatura(pdf: UploadFile = File(...), db: Session = Depends(get_db)):
 
     if crud.obter_fatura_por_codigo(db, dados["codigo_fatura"]):
         raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Já existe uma fatura com o código {dados['codigo_fatura']!r}",
+            # status.HTTP_409_CONFLICT,
+            # f"Já existe uma fatura com o código {dados['codigo_fatura']!r}",
+            status_code=409,
+            detail=f"Fatura duplicada: já existe uma fatura com o código '{dados['codigo_fatura']}'",
         )
 
     # Separar consumos do payload da fatura
@@ -157,7 +158,7 @@ def upload_fatura(pdf: UploadFile = File(...), db: Session = Depends(get_db)):
         )
 
     # Se quiser manter o campo na fatura também:
-    fatura.consumo_kwh = fatura.consumos[0].kwh  # opcional
+    # fatura.consumo_kwh = fatura.consumos[0].kwh  # opcional
 
     db.add(fatura)
     db.commit()
