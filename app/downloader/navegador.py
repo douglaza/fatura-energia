@@ -198,27 +198,29 @@ def baixar_pdf_do_card(
     # 1. Clica no card e descobre se abriu nova aba ou navegou na mesma
     detalhes_page: Page
     nova_aba = False
-    # try:
-    #     with page.context.expect_page(timeout=TIMEOUT_CURTO_MS) as new_page_info:
-    #         card.click()
-    #     detalhes_page = new_page_info.value
-    #     nova_aba = True
-    #     logger.info("Detalhes abriram em nova aba: %s", detalhes_page.url)
-    # except Exception:
-    #     # Não abriu aba nova → o expect_page consumiu o clique; refazemos.
-    #     card.click()
-    #     page.wait_for_url(URL_DETALHES, timeout=TIMEOUT_MS)
-    #     detalhes_page = page
-    #     logger.info("Detalhes abriram na mesma aba: %s", detalhes_page.url)
-    with page.context.expect_page(timeout=TIMEOUT_CURTO_MS) as new_page_info:
-        card.click()
-
     try:
+        with page.context.expect_page(timeout=TIMEOUT_CURTO_MS) as new_page_info:
+            card.click()
         detalhes_page = new_page_info.value
         nova_aba = True
+        
     except Exception:
-        page.wait_for_url(URL_DETALHES, timeout=TIMEOUT_MS)
+        page.wait_for_timeout(3000)
+
         detalhes_page = page
+        nova_aba = False
+
+        print("URL atual:", page.url)
+        logger.info("Detalhes abriram na mesma aba: %s", page.url)
+    # with page.context.expect_page(timeout=TIMEOUT_CURTO_MS) as new_page_info:
+    #     card.click()
+
+    # try:
+    #     detalhes_page = new_page_info.value
+    #     nova_aba = True
+    # except Exception:
+    #     page.wait_for_url(URL_DETALHES, timeout=TIMEOUT_MS)
+    #     detalhes_page = page
 
 
     # try:

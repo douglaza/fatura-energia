@@ -20,7 +20,7 @@ class CemigSettings(BaseSettings):
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/131.0.0.0 Safari/537.36"
     )
-
+    auth_mode: str = "interactive"
     state_file: Path = Path("data/session_state.json")
 
 cemig_settings = CemigSettings()
