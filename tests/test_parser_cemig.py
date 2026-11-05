@@ -119,3 +119,47 @@ def test_parse_texto_vazio():
     from app.parser.cemig import parse_fatura
     r = parse_fatura("")
     assert all(v in (None, []) for v in r.values())
+
+
+def test_parse_titular_e_historico_com_texto_de_outra_coluna():
+    from app.parser.cemig import parse_fatura
+
+    texto = """DOCUMENTO AUXILIAR DA NOTA FISCAL DE ENERGIA ELÉTRICA
+CEMIG DISTRIBUIÇÃO S.A.
+AV. BARBACENA, 1200 - BELO HORIZONTE - MG
+CLIENTE DE TESTE Referente a Vencimento Valor a pagar (R$)
+OUT/2026 22/11/2026 344,83
+Histórico de Consumo
+OUT/26 268 8,93 30
+ABR/26 205 7,06 29 Reservado ao Fisco
+"""
+
+    resultado = parse_fatura(texto)
+
+    assert resultado["titular"] == "CLIENTE DE TESTE"
+    assert resultado["mes_referencia"] == "2026-10"
+    assert [consumo["data_leitura"].strftime("%Y-%m") for consumo in resultado["consumos"]] == [
+        "2026-10",
+        "2026-04",
+    ]
+
+
+def test_parse_mes_referencia_e_vencimento_no_layout_tabular():
+    from app.parser.cemig import parse_fatura
+
+    texto = """DOCUMENTO AUXILIAR DA NOTA FISCAL DE ENERGIA ELÉTRICA
+NOTA FISCAL Nº 123456 - SÉRIE 000
+TITULAR EXEMPLO
+UNIDADE CONSUMIDORA 1234567890
+Referente a Vencimento Valor a pagar (R$)
+RUA EXEMPLO 10 AP 1 JUL/2026 22/08/2026 306,01
+Data de emissão: 01/08/2026
+TOTAL 306,01
+Energia kWh PPC123456789 3.056 3.284 1 228
+JUL/26 228 7,12 32
+"""
+
+    resultado = parse_fatura(texto)
+
+    assert resultado["mes_referencia"] == "2026-07"
+    assert resultado["vencimento"] == date(2026, 8, 22)

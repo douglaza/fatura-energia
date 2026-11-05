@@ -10,34 +10,65 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.fatura import Fatura
 
 
-def _consumo_por_fatura(db: Session) -> list[dict[str, Any]]:
-    """Retorna lista de faturas com consumo (kwh), valor e metadados."""
+def _carregar_faturas(db: Session) -> list[Fatura]:
     stmt = (
         select(Fatura)
         .options(joinedload(Fatura.consumos))
-        .order_by(Fatura.mes_referencia)
+        .order_by(Fatura.mes_referencia, Fatura.id)
     )
-    # faturas = list(db.scalars(stmt))
-    faturas = list(db.scalars(stmt).unique())
+    return list(db.scalars(stmt).unique())
 
 
+def _consumo_por_fatura(db: Session) -> list[dict[str, Any]]:
+    """Retorna os valores cobrados e o consumo do mês de cada fatura."""
     resultado = []
-    for f in faturas:
-        if f.consumos:
-            kwh = sum(c.kwh for c in f.consumos)
-        else:
-            kwh = float(f.consumo_kwh) if f.consumo_kwh is not None else None
+    for fatura in _carregar_faturas(db):
+        consumo_mes = next(
+            (
+                consumo
+                for consumo in fatura.consumos
+                if consumo.data_leitura.strftime("%Y-%m") == fatura.mes_referencia
+            ),
+            None,
+        )
+        consumo_kwh = fatura.consumo_kwh
+        if consumo_kwh is None and consumo_mes is not None:
+            consumo_kwh = consumo_mes.kwh
         resultado.append(
             {
-                "mes": f.mes_referencia,
-                "kwh": kwh,
-                "valor": float(f.valor_total),
-                "codigo": f.codigo_fatura,
-                "titular": f.titular,
-                "vencimento": f.vencimento,
+                "mes": fatura.mes_referencia,
+                "kwh": float(consumo_kwh) if consumo_kwh is not None else None,
+                "valor": float(fatura.valor_total),
+                "codigo": fatura.codigo_fatura,
+                "titular": fatura.titular,
+                "vencimento": fatura.vencimento,
             }
         )
     return resultado
+
+
+def _dados_consumo_mensal(db: Session) -> list[dict[str, Any]]:
+    """Consolida leituras por mês, descartando repetições entre faturas."""
+    consumo_por_mes = {}
+    valor_por_mes = {}
+
+    for fatura in _carregar_faturas(db):
+        for consumo in fatura.consumos:
+            mes = consumo.data_leitura.strftime("%Y-%m")
+            consumo_por_mes[mes] = float(consumo.kwh)
+
+        if fatura.consumo_kwh is not None:
+            consumo_por_mes[fatura.mes_referencia] = float(fatura.consumo_kwh)
+        valor_por_mes[fatura.mes_referencia] = float(fatura.valor_total)
+
+    return [
+        {
+            "mes": mes,
+            "kwh": consumo_por_mes[mes],
+            "valor": valor_por_mes.get(mes),
+        }
+        for mes in sorted(consumo_por_mes)
+    ]
 
 
 def calcular_indicadores(db: Session) -> dict[str, Any]:
@@ -49,7 +80,12 @@ def calcular_indicadores(db: Session) -> dict[str, Any]:
         gasto_anual, ultima_fatura, tendencia, total_faturas,
         projecao_consumo (média dos até três meses mais recentes).
     """
-    dados = [d for d in _consumo_por_fatura(db) if d["kwh"] is not None]
+    faturas = _consumo_por_fatura(db)
+    dados = [d for d in _dados_consumo_mensal(db) if d["kwh"] is not None]
+    valores_faturas = [fatura["valor"] for fatura in faturas]
+    valor_medio = sum(valores_faturas) / len(valores_faturas) if faturas else 0.0
+    gasto_anual = sum(valores_faturas)
+    ultima = faturas[-1] if faturas else None
 
     if not dados:
         return {
@@ -58,22 +94,18 @@ def calcular_indicadores(db: Session) -> dict[str, Any]:
             "menor_consumo": 0.0,
             "mes_maior_consumo": None,
             "mes_menor_consumo": None,
-            "valor_medio": 0.0,
-            "gasto_anual": 0.0,
-            "ultima_fatura": None,
+            "valor_medio": round(valor_medio, 2),
+            "gasto_anual": round(gasto_anual, 2),
+            "ultima_fatura": ultima,
             "tendencia": "indisponível",
-            "total_faturas": 0,
+            "total_faturas": len(faturas),
             "projecao_consumo": None,
         }
 
     consumo_medio = sum(d["kwh"] for d in dados) / len(dados)
     maior = max(dados, key=lambda d: d["kwh"])
     menor = min(dados, key=lambda d: d["kwh"])
-    valor_medio = sum(d["valor"] for d in dados) / len(dados)
-    gasto_anual = sum(d["valor"] for d in dados)
-
     tendencia = _calcular_tendencia(dados)
-    ultima = dados[-1] if dados else None
     consumos_recentes = [d["kwh"] for d in dados[-3:]]
     projecao_consumo = sum(consumos_recentes) / len(consumos_recentes)
 
@@ -87,7 +119,7 @@ def calcular_indicadores(db: Session) -> dict[str, Any]:
         "gasto_anual": round(gasto_anual, 2),
         "ultima_fatura": ultima,
         "tendencia": tendencia,
-        "total_faturas": len(dados),
+        "total_faturas": len(faturas),
         "projecao_consumo": round(projecao_consumo, 2),
     }
 

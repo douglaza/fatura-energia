@@ -25,9 +25,11 @@ def parse_fatura(texto: str) -> dict:
                   t, re.IGNORECASE)
     instalacao = m.group(1).strip(".") if m else None
 
-    # --- Mês de referência: "Referente a JUL/2026"
-    m = re.search(r"Referente\s+a\s+([A-Z]{3})/(\d{4})", t)
-    mes_referencia = f"{m.group(2)}-{MESES[m.group(1)]:02d}" if m else None
+    # O mês aparece como "Referente a JUL/2026" ou na coluna "MÊS/ANO".
+    m = re.search(r"\b([A-Z]{3})/(\d{4})\b", t, re.IGNORECASE)
+    mes_referencia = (
+        f"{m.group(2)}-{MESES[m.group(1).upper()]:02d}" if m else None
+    )
 
     # --- Data de emissão
     m = re.search(r"Data\s*de\s*emiss[aã]o:\s*(\d{2}/\d{2}/\d{4})", t)
@@ -43,8 +45,12 @@ def parse_fatura(texto: str) -> dict:
     # vencimento = _to_date(m.group(1)) if m else None
     # valor_total = _num_br(m.group(2)) if m else None
 
-    # --- Vencimento: data após o rótulo, tolerante a quebras de linha
-    m = re.search(r"Vencimento\s*[\s\S]{0,40}?(\d{2}/\d{2}/\d{4})", t)
+    # A data pode ficar na linha seguinte ao cabeçalho das colunas da fatura.
+    m = re.search(
+        r"Vencimento\s*[\s\S]{0,200}?(\d{2}/\d{2}/\d{4})",
+        t,
+        re.IGNORECASE,
+    )
     vencimento = _to_date(m.group(1)) if m else None
 
     valor_total = None
@@ -54,19 +60,31 @@ def parse_fatura(texto: str) -> dict:
         m = re.search(r"^TOTAL\s+([\d.,]+)", t, re.MULTILINE)
         valor_total = _num_br(m.group(1)) if m else None
 
-    # --- Titular: primeira linha em CAIXA ALTA que NÃO é cabeçalho CEMIG
+    # O nome do cliente pode compartilhar a linha com o cabeçalho das colunas.
     BOILERPLATE = re.compile(
         r"CEMIG|DOCUMENTO AUXILIAR|NOTA FISCAL", re.IGNORECASE
     )
     titular = None
-    for linha in texto.splitlines():
-        linha = linha.strip()
-        if not linha or BOILERPLATE.search(linha):
-            continue
-        titular = linha          # primeira linha "de conteúdo" após o cabeçalho
-        break
+    for linha in t.splitlines():
+        marcador_referencia = re.search(r"\bReferente\s+a\b", linha, re.IGNORECASE)
+        if marcador_referencia:
+            candidato = linha[:marcador_referencia.start()].strip()
+            if candidato and not BOILERPLATE.search(candidato):
+                titular = candidato
+                break
 
-
+    if titular is None:
+        endereco = re.compile(
+            r"^(?:RUA|R\.|AV\.?|AVENIDA|ALAMEDA|ROD\.?|RODOVIA|"
+            r"TRAVESSA|ESTRADA|CEP\b|CPF\b)",
+            re.IGNORECASE,
+        )
+        for linha in texto.splitlines():
+            linha = linha.strip()
+            if not linha or BOILERPLATE.search(linha) or endereco.search(linha):
+                continue
+            titular = linha
+            break
 
     # # --- Consumo do mês: coluna "Consumo kWh" (Informações Técnicas)
     # #     "Energia kWh   PPC257033321   3.056   3.284   1   228"
@@ -82,9 +100,6 @@ def parse_fatura(texto: str) -> dict:
     #     t)
     # consumo_kwh = int(m.group(4)) if m else None
 
-    if "Energia" in t:
-        print("ACHOU ENERGIA")
-
     consumo_kwh = None
 
     for linha in t.splitlines():
@@ -97,18 +112,10 @@ def parse_fatura(texto: str) -> dict:
             consumo_kwh = int(m.group(1))
             break
 
-    for linha in t.splitlines():
-        if "Energia" in linha:
-            print(linha)
-
-    for linha in t.splitlines():
-        if "Energia KWh" in linha:
-            print(repr(linha))
-
     # --- Histórico: "JUL/26 228 7,12 32"
     consumos = []
     for mm in re.finditer(
-        r"^([A-Z]{3})/(\d{2})\s+(\d+)\s+([\d,]+)\s+(\d+)\s*$",
+        r"^[ \t]*([A-Z]{3})/(\d{2})[ \t]+(\d+)[ \t]+([\d.,]+)[ \t]+(\d+)\b",
         t, re.MULTILINE):
         mes_abbr, ano2, kwh, media, dias = mm.groups()
         consumos.append({

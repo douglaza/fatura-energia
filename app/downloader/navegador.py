@@ -15,6 +15,7 @@ import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from app.downloader.config import CemigSettings, cemig_settings
 from app.downloader.auth import SessionExpired, SessionManager, dispensar_cookies
@@ -55,7 +56,7 @@ SELETORES_BAIXAR_PDF = (
 #: Padrão de URL da página de detalhes (navegação na mesma aba).
 URL_DETALHES = "**/bills/duplicate-bill/details**"
 
-NOME_FALLBACK = "fatura_cemig.pdf"
+NOME_ARQUIVO_FATURA = "fatura.pdf"
 
 MESES = {
     1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
@@ -185,7 +186,6 @@ def baixar_pdf_do_card(
     page: Page,
     card,
     destino_dir: Path,
-    nome_fallback: str = NOME_FALLBACK,
 ) -> Path:
     """Clica no card, chega à página de detalhes, clica em 'Baixar PDF' e salva o PDF.
 
@@ -246,12 +246,14 @@ def baixar_pdf_do_card(
 
         download = download_info.value
 
-        nome = getattr(download, "suggested_filename", None) or nome_fallback
-        if not nome.lower().endswith(".pdf"):
-            nome = f"{nome}.pdf"
-        destino = destino_dir / nome
+        destino = destino_dir / NOME_ARQUIVO_FATURA
+        temporario = destino_dir / f".fatura-{uuid4().hex}.pdf"
+        try:
+            download.save_as(temporario)
+            temporario.replace(destino)
+        finally:
+            temporario.unlink(missing_ok=True)
 
-        download.save_as(destino)
         logger.info("Fatura salva em %s", destino)
         return destino
     finally:
@@ -275,16 +277,7 @@ def navegar_e_baixar(
     navegar_ate_faturas(page, cfg)
     abrir_menu_contas(page)
     card = localizar_card(page, mes_ref)
-    return baixar_pdf_do_card(
-        page,
-        card,
-        cfg.download_dir,
-        nome_fallback=(
-            f"fatura_{normalizar_mes_referencia(mes_ref).replace('/', '-')}.pdf"
-            if mes_ref
-            else NOME_FALLBACK
-        ),
-    )
+    return baixar_pdf_do_card(page, card, cfg.download_dir)
 
 def baixar_fatura(
     mes_ref: str | None = None,

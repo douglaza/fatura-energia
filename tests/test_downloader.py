@@ -401,24 +401,30 @@ def test_baixar_pdf_do_card_salva_arquivo_no_diretorio(cfg):
 
     assert destino == cfg.download_dir / "fatura.pdf"
     assert destino.read_bytes().startswith(b"%PDF")
+    assert list(cfg.download_dir.iterdir()) == [destino]
 
 
-def test_baixar_pdf_do_card_usa_fallback_quando_nome_vazio(cfg):
+def test_baixar_pdf_do_card_substitui_arquivo_existente(cfg):
+    cfg.download_dir.mkdir(parents=True, exist_ok=True)
+    destino_existente = cfg.download_dir / "fatura.pdf"
+    destino_existente.write_bytes(b"PDF antigo")
     page = FakePage(visiveis={navegador.SELETOR_CARD}, nome_download="")
     card = page.locator(navegador.SELETOR_CARD)
 
     destino = navegador.baixar_pdf_do_card(page, card, cfg.download_dir)
 
-    assert destino.name == navegador.NOME_FALLBACK
+    assert destino == destino_existente
+    assert destino.read_bytes() == b"%PDF-1.4 conteudo falso"
+    assert list(cfg.download_dir.iterdir()) == [destino]
 
 
-def test_baixar_pdf_do_card_acrescenta_extensao_ausente(cfg):
+def test_baixar_pdf_do_card_ignora_nome_sugerido_pelo_portal(cfg):
     page = FakePage(visiveis={navegador.SELETOR_CARD}, nome_download="conta-outubro")
     card = page.locator(navegador.SELETOR_CARD)
 
     destino = navegador.baixar_pdf_do_card(page, card, cfg.download_dir)
 
-    assert destino.name == "conta-outubro.pdf"
+    assert destino.name == "fatura.pdf"
 
 
 # --------------------------------------------------------------------------- #
@@ -440,16 +446,16 @@ def test_navegar_e_baixar_executa_a_sequencia_completa(cfg):
     assert destino.exists()
 
 
-def test_navegar_e_baixar_com_mes_ref_nomeia_arquivo_por_mes(cfg):
+def test_navegar_e_baixar_com_mes_ref_usa_nome_fixo(cfg):
     page = FakePage(
         visiveis={navegador.SELETOR_MENU_CONTAS, navegador.SELETOR_CARD},
         textos_cards=["10/2026"],
-        nome_download="",  # força o nome de fallback
+        nome_download="",
     )
 
     destino = navegador.navegar_e_baixar(page, cfg, "10/2026")
 
-    assert destino.name == "fatura_10-2026.pdf"
+    assert destino == cfg.download_dir / "fatura.pdf"
 
 
 def test_baixar_fatura_usa_sessao_e_contexto(cfg):

@@ -65,25 +65,23 @@ def df_consumos(db: Session) -> pd.DataFrame:
 
 
 def df_consumo_mensal(db: Session) -> pd.DataFrame:
-    """DataFrame agregado: consumo total por mês de referência.
+    """DataFrame consolidado: uma leitura de consumo por mês.
 
-    Colunas: mes_referencia, consumo_kwh, valor_total.
-    O consumo é a soma dos registros da tabela consumos; quando não há,
-    cai back para o campo consumo_kwh da fatura.
+    Leituras repetidas em históricos de faturas diferentes são consolidadas
+    pelo mês. O valor da fatura só é preenchido nos meses com conta cadastrada.
     """
-    from app.analytics.indicadores import _consumo_por_fatura  # noqa: PLC0415
+    from app.analytics.indicadores import _dados_consumo_mensal  # noqa: PLC0415
 
-    dados = _consumo_por_fatura(db)
+    dados = _dados_consumo_mensal(db)
     if not dados:
         return pd.DataFrame(columns=["mes_referencia", "consumo_kwh", "valor_total"])
     df = pd.DataFrame(dados)
-    # df = df.rename(columns={"mes": "mes_referencia", "kwh": "consumo_kwh"})
     df = df.rename(
         columns={
             "mes": "mes_referencia",
             "kwh": "consumo_kwh",
             "valor": "valor_total",
-            }
+        }
     )
     df = df.dropna(subset=["consumo_kwh"])
     return df[["mes_referencia", "consumo_kwh", "valor_total"]]

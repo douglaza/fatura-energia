@@ -10,6 +10,7 @@ Quatro abas:
 from __future__ import annotations
 
 from io import BytesIO
+import pandas as pd
 
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, LineChart, Reference
@@ -134,8 +135,13 @@ def _montar_workbook(db) -> bytes:
             ws_historico.cell(row=linha, column=1, value=row["mes_referencia"])
             c2 = ws_historico.cell(row=linha, column=2, value=round(float(row["consumo_kwh"]), 2))
             c2.number_format = "0.00"
-            c3 = ws_historico.cell(row=linha, column=3, value=round(float(row["valor_total"]), 2))
-            c3.number_format = '"R$ "#,##0.00'
+            if pd.notna(row["valor_total"]):
+                c3 = ws_historico.cell(
+                    row=linha,
+                    column=3,
+                    value=round(float(row["valor_total"]), 2),
+                )
+                c3.number_format = '"R$ "#,##0.00'
             linha += 1
 
         ultimo = linha - 1
@@ -219,8 +225,13 @@ def _montar_workbook(db) -> bytes:
         for _, row in df_mensal.iterrows():
             ws_graficos.cell(row=r, column=1, value=row["mes_referencia"])
             ws_graficos.cell(row=r, column=2, value=round(float(row["consumo_kwh"]), 2))
-            c = ws_graficos.cell(row=r, column=3, value=round(float(row["valor_total"]), 2))
-            c.number_format = '"R$ "#,##0.00'
+            if pd.notna(row["valor_total"]):
+                c = ws_graficos.cell(
+                    row=r,
+                    column=3,
+                    value=round(float(row["valor_total"]), 2),
+                )
+                c.number_format = '"R$ "#,##0.00'
             r += 1
         ultima_linha = r - 1
 

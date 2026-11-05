@@ -1,6 +1,3 @@
-import io
-
-import pdfplumber
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
@@ -9,6 +6,7 @@ from sqlalchemy.orm import Session
 from app import crud, schemas
 from app.core.database import get_db
 from app.parser.cemig import parse_fatura
+from app.parser.pdf import extrair_texto
 
 from app.schemas import fatura as fatura_schemas
 
@@ -27,14 +25,13 @@ CAMPOS_OBRIGATORIOS = (
 
 
 @router.post("/upload", response_model=fatura_schemas.FaturaRead, status_code=status.HTTP_201_CREATED)
-async def upload_fatura(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    if not file.filename.lower().endswith(".pdf"):
+async def upload_fatura(pdf: UploadFile = File(...), db: Session = Depends(get_db)):
+    if not (pdf.filename or "").lower().endswith(".pdf"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Arquivo deve ser um PDF")
 
-    conteudo = await file.read()
+    conteudo = await pdf.read()
     try:
-        with pdfplumber.open(io.BytesIO(conteudo)) as pdf:
-            texto = "\n".join(p.extract_text() or "" for p in pdf.pages)
+        texto = extrair_texto(conteudo)
     except Exception as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Erro ao ler PDF: {e}")
 
@@ -54,7 +51,7 @@ async def upload_fatura(file: UploadFile = File(...), db: Session = Depends(get_
     except IntegrityError:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f"Já existe uma fatura com o código {dados['codigo_fatura']!r}",
+            f"Fatura duplicada: já existe uma fatura com o código {dados['codigo_fatura']!r}",
         )
 
     for c in consumos_data:

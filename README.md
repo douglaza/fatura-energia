@@ -5,12 +5,12 @@ Pipeline automatizado para **download, parsing e armazenamento de faturas CEMIG*
 ## Funcionalidades
 
 - 🤖 **Downloader** — navegação automatizada com Playwright (login com reCAPTCHA resolvido pelo humano, dispensa de banner de cookies, acesso à página de detalhes da fatura e download do PDF). A sessão vive em memória durante a execução; o login é solicitado a cada execução nesta fase (v1).
-- 📄 **Parser** — extração de dados (vencimento, consumo kWh, valor, referência) dos PDFs com pdfplumber/pdfminer.
+- 📄 **Parser** — extração de titular, vencimento, consumo kWh, referência e histórico mensal dos PDFs CEMIG com pdfplumber/pdfminer.
 - 🗄️ **PostgreSQL** — modelos SQLAlchemy + migrações Alembic (`faturas`, `consumos`).
 - 🔌 **API REST** — endpoints para consulta de faturas/consumos e upload manual de PDFs.
 - 📊 **Dashboard Excel** — exportação de indicadores, histórico, faturas e gráficos via OpenPyXL.
 - 🔄 **Pipeline** — orquestra parser → persistência (`app/pipeline.py`), disparável via `python -m app.downloader --persistir`.
-- ✅ **Testes** — 70 testes pytest cobrindo parser, CRUD, API, relacionamentos, downloader (dublês sem browser), pipeline e dashboard.
+- ✅ **Testes** — 73 testes pytest cobrindo parser, CRUD, API, relacionamentos, downloader (dublês sem browser), pipeline e dashboard.
 
 ## Stack
 
@@ -88,7 +88,7 @@ Docs interativas em `http://localhost:8000/docs`.
 
 ```bash
 curl -X POST http://localhost:8000/faturas/upload \
-  -F "arquivo=@fatura.pdf"
+  -F "pdf=@data/raw/fatura.pdf"
 ```
 
 **Baixar dashboard Excel** (com a API em execução e o banco configurado):
@@ -97,10 +97,16 @@ curl -X POST http://localhost:8000/faturas/upload \
 curl -o dashboard_consumo.xlsx http://localhost:8000/relatorios/dashboard.xlsx
 ```
 
-O arquivo contém quatro abas: **Resumo Executivo** (consumo médio, maior e menor
-consumo, projeção, valores e tendência), **Histórico**, **Faturas** e **Gráficos**.
+O arquivo contém quatro abas: **Resumo Executivo** (consumo médio, projeção,
+maior e menor consumo, valores e tendência), **Histórico**, **Faturas** e
+**Gráficos**. As leituras do histórico são organizadas por mês; o dashboard não
+soma todos os meses de uma fatura como se fossem um único consumo. Se várias
+faturas contiverem a mesma leitura mensal, ela aparece uma só vez. Os valores
+financeiros consideram as faturas cadastradas; meses sem fatura ficam sem valor
+na série de gastos.
+
 A projeção do próximo mês é a média dos consumos válidos de até três meses mais
-recentes; é uma estimativa simples, não considera sazonalidade. Veja também
+recentes. É uma média móvel simples e não considera sazonalidade. Veja também
 [cemigbill1.html](cemigbill1.html).
 
 **Testes**:
@@ -111,24 +117,24 @@ pytest -v
 
 ## Configuração (`.env`)
 
-| Variável               | Descrição                                        |
-|------------------------|--------------------------------------------------|
-| `DATABASE_URL`         | URL de conexão PostgreSQL                        |
-| `POSTGRES_*`           | Credenciais do container Postgres                |
-| `CEMIG_USER`           | Usuário do portal CEMIG (e-mail ou CPF)          |
-| `CEMIG_PASSWORD`       | Senha do portal CEMIG                            |
-| `CEMIG_INSTALACAO`     | Número da instalação (opcional)                  |
-| `CEMIG_DOWNLOAD_DIR`   | Pasta onde o PDF baixado é salvo (padrão: `data/raw`) |
-| `CEMIG_HEADLESS`       | Rodar Chromium sem janela (padrão: `false`)      |
+| Variável              | Descrição                                               |
+| ---------------------- | --------------------------------------------------------- |
+| `DATABASE_URL`       | URL de conexão PostgreSQL                                |
+| `POSTGRES_*`         | Credenciais do container Postgres                         |
+| `CEMIG_USER`         | Usuário do portal CEMIG (e-mail ou CPF)                  |
+| `CEMIG_PASSWORD`     | Senha do portal CEMIG                                     |
+| `CEMIG_INSTALACAO`   | Número da instalação (opcional)                        |
+| `CEMIG_DOWNLOAD_DIR` | Pasta onde o PDF baixado é salvo (padrão: `data/raw`) |
+| `CEMIG_HEADLESS`     | Rodar Chromium sem janela (padrão: `false`)            |
 
 ## Roadmap
 
-- [x] Download automatizado de faturas (login manual com reCAPTCHA)
-- [x] Parser de PDF
-- [x] Integração download → parser → PostgreSQL (`--persistir` + `app/pipeline.py`)
+- [X] Download automatizado de faturas (login manual com reCAPTCHA)
+- [X] Parser de PDF
+- [X] Integração download → parser → PostgreSQL (`--persistir` + `app/pipeline.py`)
 - [ ] Armazenar o PDF original em disco e salvar o caminho na fatura (nova coluna `arquivo_pdf`, nova migration Alembic)
 - [ ] Encadear download → upload sem intervenção humana
-- [x] Histórico consolidado e dashboard Excel com indicadores e gráficos
+- [X] Histórico consolidado e dashboard Excel com indicadores e gráficos
 - [ ] Manter seletores do portal em constantes para ajuste rápido quando mudarem
 
 ## Segurança
@@ -139,4 +145,3 @@ pytest -v
 ## Status
 
 > Projeto em desenvolvimento ativo. Download, parsing, API, integração download → parser → banco e exportação do dashboard Excel funcionando. Login continua manual (reCAPTCHA) a cada execução nesta fase (v1).
-
