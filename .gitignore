@@ -11,7 +11,11 @@ __pycache__/
 venv/
 
 # Dados baixados e estado de sessão (credenciais!)
-data/
+data/*
+!data/raw/
+data/raw/*
+!data/raw/.gitkeep
+data/tutorial/*
 pdfs_armazenados/
 **/storage_state.json
 
@@ -30,3 +34,4 @@ test-results/
 .DS_Store
 CONTEXT.md
 cemigbill*
+!data/raw/cemigbill3.html

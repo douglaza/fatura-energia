@@ -9,8 +9,9 @@ Pipeline automatizado para **download, parsing e armazenamento de faturas CEMIG*
 - 🗄️ **PostgreSQL** — modelos SQLAlchemy + migrações Alembic (`faturas`, `consumos`).
 - 🔌 **API REST** — endpoints para consulta de faturas/consumos e upload manual de PDFs.
 - 📊 **Dashboard Excel** — exportação de indicadores, histórico, faturas e gráficos via OpenPyXL.
+- 💬 **Assistente V3 (fase 1)** — explica faturas, responde perguntas comuns e oferece sugestões com regras determinísticas e dados locais; sem chamadas a LLM. Guia: [data/raw/cemigbill3.html](data/raw/cemigbill3.html).
 - 🔄 **Pipeline** — orquestra parser → persistência (`app/pipeline.py`), disparável via `python -m app.downloader --persistir`.
-- ✅ **Testes** — 73 testes pytest cobrindo parser, CRUD, API, relacionamentos, downloader (dublês sem browser), pipeline e dashboard.
+- ✅ **Testes** — 81 testes pytest cobrindo parser, CRUD, API, relacionamentos, downloader (dublês sem browser), pipeline, dashboard e assistente.
 
 ## Stack
 
@@ -24,6 +25,7 @@ Python · FastAPI · SQLAlchemy · Alembic · PostgreSQL · Playwright · pdfplu
     │   ├── main.py              # app FastAPI e roteadores (faturas, upload)
     │   ├── pipeline.py          # orquestra parser → persistência
     │   ├── analytics/           # indicadores, relatórios pandas e dashboard OpenPyXL
+    │   ├── ai/                  # explicações, chat determinístico e recomendações
     │   ├── core/                # config.py (Settings) + database.py (conexão)
     │   ├── crud/                # operações de banco (fatura, consumo)
     │   ├── db/                  # models SQLAlchemy (fatura, consumo) + repo
@@ -38,6 +40,7 @@ Python · FastAPI · SQLAlchemy · Alembic · PostgreSQL · Playwright · pdfplu
     │   └── parser/              # extração de dados dos PDFs (cemig.py, pdf.py)
     ├── migrations/              # migrações Alembic
     ├── scripts/                 # utilitários (gerar_fixture_pdf.py)
+    ├── data/raw/cemigbill3.html # guia de uso do assistente V3
     ├── tests/                   # suíte de testes pytest
     ├── docker-compose.yml       # banco PostgreSQL (dev, porta 5432)
     ├── docker-compose.test.yml  # banco PostgreSQL (testes, porta 5433)
@@ -83,6 +86,27 @@ uvicorn app.main:app --reload
 ```
 
 Docs interativas em `http://localhost:8000/docs`.
+
+**Assistente de faturas** (API ativa e banco configurado):
+
+```bash
+curl http://localhost:8000/ai/faturas/2026-10/explicar
+
+curl -X POST http://localhost:8000/ai/chat \
+  -H "Content-Type: application/json" \
+  -d '{"pergunta":"Qual foi meu maior consumo?"}'
+
+curl -X POST http://localhost:8000/ai/consultor
+```
+
+Nesta fase, as respostas são calculadas localmente com a série mensal e as faturas
+cadastradas. O assistente não envia dados a serviços externos. As perguntas
+suportadas incluem maior consumo, conta mais cara, consumo por ano e gasto médio.
+A explicação informa consumo, comparação com o mês anterior quando disponível e
+valor total. Componentes tarifários detalhados ainda não são extraídos, portanto
+não são inferidos nem apresentados como fatos. A explicação retorna `explicacao`,
+o chat retorna `resposta` e o consultor retorna `recomendacao`. Consulte o [guia
+V3](data/raw/cemigbill3.html) para exemplos completos de requisição e resposta.
 
 **Upload manual de fatura**:
 
