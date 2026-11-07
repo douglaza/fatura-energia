@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 
 from sqlalchemy.orm import Session
 
-from app.ai.services import listar_consumos_mensais, listar_faturas, obter_fatura_mes
+from app.ai.ollama import gerar_resposta, responder_com_ferramentas
+from app.ai.prompts import PROMPT_CHAT_FATURAS, PROMPT_CONSULTOR, PROMPT_EXPLICAR_FATURA
+from app.ai.services import (
+    contexto_agregado,
+    listar_consumos_mensais,
+    listar_faturas,
+    obter_fatura_mes,
+)
 
 MESES = (
     "Janeiro",
@@ -39,50 +47,46 @@ def _nome_mes(mes_referencia: str) -> str:
     return f"{MESES[int(mes) - 1]}/{ano}"
 
 
+def _perguntar_llm(system_prompt: str, pergunta: str, contexto: dict) -> str:
+    user_prompt = (
+        f"Pergunta ou tarefa: {pergunta}\n\n"
+        "Use exclusivamente este contexto factual em JSON:\n"
+        f"{json.dumps(contexto, ensure_ascii=False, allow_nan=False)}"
+    )
+    return gerar_resposta(system_prompt, user_prompt)
+
+
 def explicar_fatura(db: Session, mes_referencia: str) -> str | None:
     fatura = obter_fatura_mes(db, mes_referencia)
     if fatura is None:
         return None
 
-    linhas = [f"Fatura de {_nome_mes(mes_referencia)}."]
     consumos = listar_consumos_mensais(db)
     consumo_atual = next(
         (item for item in consumos if item["mes_referencia"] == mes_referencia),
         None,
     )
-    if consumo_atual is not None:
-        linhas.append(f"O consumo foi de {_formatar_numero(consumo_atual['consumo_kwh'])} kWh.")
-        ano, mes = map(int, mes_referencia.split("-"))
-        ano_anterior, mes_anterior = (ano - 1, 12) if mes == 1 else (ano, mes - 1)
-        referencia_anterior = f"{ano_anterior:04d}-{mes_anterior:02d}"
-        anterior = next(
-            (item for item in consumos if item["mes_referencia"] == referencia_anterior),
-            None,
-        )
-        if anterior and anterior["consumo_kwh"]:
-            variacao = (
-                (consumo_atual["consumo_kwh"] - anterior["consumo_kwh"])
-                / anterior["consumo_kwh"]
-                * 100
-            )
-            sentido = "aumento" if variacao > 0 else "redução"
-            linhas.append(
-                f"Em relação a {_nome_mes(referencia_anterior)}, houve {sentido} "
-                f"de {_formatar_numero(abs(variacao), 1)}%."
-            )
-        else:
-            linhas.append("Não há consumo do mês anterior disponível para comparação.")
-    elif fatura["consumo_kwh"] is not None:
-        linhas.append(f"O consumo informado na fatura foi de {_formatar_numero(fatura['consumo_kwh'])} kWh.")
-    else:
-        linhas.append("O consumo desta fatura não está disponível no histórico.")
-
-    linhas.append(f"O valor total foi de R$ {_formatar_numero(fatura['valor_total'])}.")
-    linhas.append(
-        "A composição detalhada dos encargos ainda não está estruturada; "
-        "não é possível listar os componentes com segurança."
+    ano, mes = map(int, mes_referencia.split("-"))
+    ano_anterior, mes_anterior = (ano - 1, 12) if mes == 1 else (ano, mes - 1)
+    referencia_anterior = f"{ano_anterior:04d}-{mes_anterior:02d}"
+    anterior = next(
+        (item for item in consumos if item["mes_referencia"] == referencia_anterior),
+        None,
     )
-    return "\n\n".join(linhas)
+    contexto = {
+        "fatura": {
+            "mes_referencia": mes_referencia,
+            "valor_total_brl": fatura["valor_total"],
+            "consumo_fatura_kwh": fatura["consumo_kwh"],
+        },
+        "consumo_mensal": consumo_atual,
+        "consumo_mes_anterior": anterior,
+    }
+    return _perguntar_llm(
+        PROMPT_EXPLICAR_FATURA,
+        f"Explique a fatura de {_nome_mes(mes_referencia)}.",
+        contexto,
+    )
 
 
 def responder_pergunta(db: Session, pergunta: str) -> str:
@@ -91,7 +95,30 @@ def responder_pergunta(db: Session, pergunta: str) -> str:
     faturas = listar_faturas(db)
 
     if any(termo in pergunta_normalizada for termo in ("reduzir", "economizar", "economia")):
-        return recomendar_economia(db)
+        return recomendar_economia(db, pergunta)
+
+    if "fatura" in pergunta_normalizada and any(
+        termo in pergunta_normalizada for termo in ("quantas", "quantidade", "numero")
+    ):
+        if any(
+            termo in pergunta_normalizada
+            for termo in ("valor total", "gasto total", "total gasto")
+        ):
+            total = sum(item["valor_total"] for item in faturas)
+            return (
+                f"Há {len(faturas)} fatura(s) cadastrada(s), com valor total de "
+                f"R$ {_formatar_numero(total)}."
+            )
+        return f"Há {len(faturas)} fatura(s) cadastrada(s) neste banco."
+
+    if any(
+        termo in pergunta_normalizada
+        for termo in ("valor total", "gasto total", "total gasto")
+    ):
+        if not faturas:
+            return "Ainda não há faturas cadastradas para somar."
+        total = sum(item["valor_total"] for item in faturas)
+        return f"O valor total das {len(faturas)} fatura(s) cadastradas é R$ {_formatar_numero(total)}."
 
     if "consumo" in pergunta_normalizada and any(
         termo in pergunta_normalizada
@@ -101,6 +128,36 @@ def responder_pergunta(db: Session, pergunta: str) -> str:
             return "Ainda não há histórico de consumo cadastrado."
         maior = max(consumos, key=lambda item: item["consumo_kwh"])
         return f"{_nome_mes(maior['mes_referencia'])}\n{_formatar_numero(maior['consumo_kwh'])} kWh"
+
+    if "consumo" in pergunta_normalizada and any(
+        termo in pergunta_normalizada
+        for termo in ("mais recente", "ultimos meses", "historico recente")
+    ):
+        if not consumos:
+            return "Ainda não há histórico de consumo cadastrado."
+        quantidade = 3
+        palavras_quantidade = {
+            "um": 1,
+            "dois": 2,
+            "tres": 3,
+            "quatro": 4,
+            "cinco": 5,
+            "seis": 6,
+            "sete": 7,
+            "oito": 8,
+            "nove": 9,
+            "dez": 10,
+        }
+        for palavra, valor in palavras_quantidade.items():
+            if palavra in pergunta_normalizada:
+                quantidade = valor
+                break
+        ultimos = consumos[-quantidade:]
+        return "\n".join(
+            f"{_nome_mes(item['mes_referencia'])}: "
+            f"{_formatar_numero(item['consumo_kwh'])} kWh"
+            for item in ultimos
+        )
 
     if any(termo in pergunta_normalizada for termo in ("mais cara", "maior valor", "mais alto valor")):
         if not faturas:
@@ -131,32 +188,12 @@ def responder_pergunta(db: Session, pergunta: str) -> str:
         media = sum(item["valor_total"] for item in faturas) / len(faturas)
         return f"O gasto médio por fatura cadastrada é R$ {_formatar_numero(media)}."
 
-    return (
-        "Ainda não reconheço essa pergunta. Posso informar maior consumo, "
-        "conta mais cara, consumo total por ano, gasto médio ou sugerir formas de economizar."
-    )
+    return responder_com_ferramentas(db, PROMPT_CHAT_FATURAS, pergunta)
 
 
-def recomendar_economia(db: Session) -> str:
+def recomendar_economia(db: Session, pergunta: str = "Como posso reduzir minha conta?") -> str:
     consumos = listar_consumos_mensais(db)
     if not consumos:
         return "Ainda não há histórico de consumo para personalizar recomendações."
 
-    media = sum(item["consumo_kwh"] for item in consumos) / len(consumos)
-    ultimo = consumos[-1]
-    resposta = (
-        f"A média do histórico é {_formatar_numero(media)} kWh por mês. "
-        f"O mês mais recente registrado foi {_nome_mes(ultimo['mes_referencia'])}, "
-        f"com {_formatar_numero(ultimo['consumo_kwh'])} kWh."
-    )
-    if len(consumos) < 3:
-        resposta += " O histórico ainda é curto para identificar uma tendência confiável."
-    elif ultimo["consumo_kwh"] > media:
-        resposta += " Esse mês ficou acima da média; vale revisar o uso de chuveiro elétrico, climatização e equipamentos em espera."
-    else:
-        resposta += " Esse mês ficou dentro ou abaixo da média; mantenha o acompanhamento e observe quais hábitos coincidem com os meses de maior consumo."
-    resposta += (
-        " As recomendações são gerais: o banco ainda não contém medições por aparelho "
-        "nem a composição detalhada da tarifa."
-    )
-    return resposta
+    return _perguntar_llm(PROMPT_CONSULTOR, pergunta, contexto_agregado(db))

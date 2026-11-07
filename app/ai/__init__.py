@@ -1,1 +1,1 @@
-"""Assistente determinístico para consulta às faturas."""
+"""Assistente local para consulta às faturas."""

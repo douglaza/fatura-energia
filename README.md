@@ -9,13 +9,14 @@ Pipeline automatizado para **download, parsing e armazenamento de faturas CEMIG*
 - 🗄️ **PostgreSQL** — modelos SQLAlchemy + migrações Alembic (`faturas`, `consumos`).
 - 🔌 **API REST** — endpoints para consulta de faturas/consumos e upload manual de PDFs.
 - 📊 **Dashboard Excel** — exportação de indicadores, histórico, faturas e gráficos via OpenPyXL.
-- 💬 **Assistente V3 (fase 1)** — explica faturas, responde perguntas comuns e oferece sugestões com regras determinísticas e dados locais; sem chamadas a LLM. Guia: [data/raw/cemigbill3.html](data/raw/cemigbill3.html).
+- 💬 **Assistente V3.1** — usa Ollama local para explicar faturas, responder perguntas abertas e gerar recomendações; perguntas numéricas conhecidas continuam determinísticas. Guia: [data/raw/cemigbill3.html](data/raw/cemigbill3.html).
+- 📚 **História consolidada** — resumo das versões e do fluxo atual em [data/raw/cemibill.html](data/raw/cemibill.html).
 - 🔄 **Pipeline** — orquestra parser → persistência (`app/pipeline.py`), disparável via `python -m app.downloader --persistir`.
-- ✅ **Testes** — 81 testes pytest cobrindo parser, CRUD, API, relacionamentos, downloader (dublês sem browser), pipeline, dashboard e assistente.
+- ✅ **Testes** — 83 testes pytest cobrindo parser, CRUD, API, relacionamentos, downloader (dublês sem browser), pipeline, dashboard e assistente.
 
 ## Stack
 
-Python · FastAPI · SQLAlchemy · Alembic · PostgreSQL · Playwright · pdfplumber · pandas · OpenPyXL · pytest
+Python · FastAPI · SQLAlchemy · Alembic · PostgreSQL · Playwright · pdfplumber · pandas · OpenPyXL · OpenAI SDK · Ollama · pytest
 
 ## Estrutura
 
@@ -25,7 +26,7 @@ Python · FastAPI · SQLAlchemy · Alembic · PostgreSQL · Playwright · pdfplu
     │   ├── main.py              # app FastAPI e roteadores (faturas, upload)
     │   ├── pipeline.py          # orquestra parser → persistência
     │   ├── analytics/           # indicadores, relatórios pandas e dashboard OpenPyXL
-    │   ├── ai/                  # explicações, chat determinístico e recomendações
+    │   ├── ai/                  # prompts, dados agregados e adapter OpenAI-compatible
     │   ├── core/                # config.py (Settings) + database.py (conexão)
     │   ├── crud/                # operações de banco (fatura, consumo)
     │   ├── db/                  # models SQLAlchemy (fatura, consumo) + repo
@@ -66,6 +67,25 @@ docker compose up -d
 alembic upgrade head
 ```
 
+### Ollama local (V3.1)
+
+O Ollama executa o modelo localmente; não há cobrança por chamada nem envio do
+contexto a um serviço remoto. O modelo ocupa alguns GB em disco e usa CPU/GPU e
+memória enquanto responde.
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull llama3.2:3b
+ollama run llama3.2:3b "Explique em uma frase o que é uma fatura de energia"
+```
+
+O instalador Linux normalmente inicia o serviço. Se ele não estiver ativo, inicie
+`ollama serve` em outro terminal. Copie os valores de Ollama já presentes no
+`.env.example` para o `.env`, se necessário. Os padrões são
+`http://localhost:11434/v1`, modelo `llama3.2:3b` e chave fictícia `ollama`
+(requisito do SDK, ignorado pelo servidor local). Para outro modelo ou endereço,
+ajuste `OLLAMA_MODEL` e `OLLAMA_BASE_URL`.
+
 ## Uso
 
 **Baixar faturas** (navegação automatizada; login manual com reCAPTCHA):
@@ -99,14 +119,20 @@ curl -X POST http://localhost:8000/ai/chat \
 curl -X POST http://localhost:8000/ai/consultor
 ```
 
-Nesta fase, as respostas são calculadas localmente com a série mensal e as faturas
-cadastradas. O assistente não envia dados a serviços externos. As perguntas
-suportadas incluem maior consumo, conta mais cara, consumo por ano e gasto médio.
-A explicação informa consumo, comparação com o mês anterior quando disponível e
-valor total. Componentes tarifários detalhados ainda não são extraídos, portanto
-não são inferidos nem apresentados como fatos. A explicação retorna `explicacao`,
-o chat retorna `resposta` e o consultor retorna `recomendacao`. Consulte o [guia
-V3](data/raw/cemigbill3.html) para exemplos completos de requisição e resposta.
+As perguntas conhecidas (maior consumo, conta mais cara, quantidade/total de
+faturas, consumo por ano, gasto médio e meses recentes) são respondidas por SQL.
+Para perguntas abertas, o Llama pode solicitar ferramentas allowlisted de resumo
+de consumo, resumo de faturas e histórico mensal. O FastAPI executa essas consultas
+com a mesma sessão `DATABASE_URL`; não há SQL arbitrário gerado pelo modelo nem
+credenciais no prompt. Só os resultados agregados retornam ao Llama.
+
+Explicação, consultoria e perguntas abertas usam Ollama. O contexto contém somente
+mês, consumo e valores de fatura, limitado aos 36 meses mais recentes; não inclui
+titular, instalação ou texto integral do PDF. A explicação retorna `explicacao`, o
+chat `resposta` e o consultor `recomendacao`. Se Ollama estiver parado ou o modelo
+não estiver baixado, os recursos que precisam dele retornam HTTP 503; consultas
+determinísticas continuam disponíveis. Componentes tarifários não são inferidos.
+Consulte o [guia V3.1](data/raw/cemigbill3.html) para exemplos completos.
 
 **Upload manual de fatura**:
 
@@ -150,6 +176,10 @@ pytest -v
 | `CEMIG_INSTALACAO`   | Número da instalação (opcional)                        |
 | `CEMIG_DOWNLOAD_DIR` | Pasta onde o PDF baixado é salvo (padrão: `data/raw`) |
 | `CEMIG_HEADLESS`     | Rodar Chromium sem janela (padrão: `false`)            |
+| `OLLAMA_BASE_URL` | Endpoint local OpenAI-compatible (padrão: `http://localhost:11434/v1`) |
+| `OLLAMA_API_KEY` | Chave fictícia exigida pelo SDK (padrão: `ollama`) |
+| `OLLAMA_MODEL` | Modelo local (padrão: `llama3.2:3b`) |
+| `OLLAMA_TIMEOUT_SECONDS` | Timeout da chamada ao modelo (padrão: `90`) |
 
 ## Roadmap
 
@@ -159,6 +189,7 @@ pytest -v
 - [ ] Armazenar o PDF original em disco e salvar o caminho na fatura (nova coluna `arquivo_pdf`, nova migration Alembic)
 - [ ] Encadear download → upload sem intervenção humana
 - [X] Histórico consolidado e dashboard Excel com indicadores e gráficos
+- [X] Assistente V3.1 com Ollama local e respostas SQL determinísticas
 - [ ] Manter seletores do portal em constantes para ajuste rápido quando mudarem
 
 ## Segurança
@@ -168,4 +199,4 @@ pytest -v
 
 ## Status
 
-> Projeto em desenvolvimento ativo. Download, parsing, API, integração download → parser → banco e exportação do dashboard Excel funcionando. Login continua manual (reCAPTCHA) a cada execução nesta fase (v1).
+> Projeto em desenvolvimento ativo. Download, parsing, API, dashboard Excel e assistente local com Ollama funcionando. Login continua manual (reCAPTCHA) a cada execução nesta fase (v1).

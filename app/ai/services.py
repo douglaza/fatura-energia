@@ -33,3 +33,33 @@ def obter_fatura_mes(db: Session, mes_referencia: str) -> dict | None:
     if not correspondentes:
         return None
     return correspondentes[-1]
+
+
+def contexto_agregado(db: Session, limite_meses: int = 36) -> dict:
+    """Retorna apenas mês, consumo e valores, limitados para contexto do LLM."""
+    consumos = listar_consumos_mensais(db)[-limite_meses:]
+    faturas = listar_faturas(db)[-limite_meses:]
+    serie_consumo = [
+        {
+            "mes": item["mes_referencia"],
+            "consumo_kwh": float(item["consumo_kwh"]),
+        }
+        for item in consumos
+        if item.get("consumo_kwh") is not None
+    ]
+    serie_faturas = [
+        {
+            "mes": item["mes_referencia"],
+            "valor_total_brl": float(item["valor_total"]),
+            "consumo_fatura_kwh": (
+                float(item["consumo_kwh"])
+                if item.get("consumo_kwh") is not None
+                else None
+            ),
+        }
+        for item in faturas
+    ]
+    return {
+        "consumo_mensal": serie_consumo,
+        "faturas": serie_faturas,
+    }
